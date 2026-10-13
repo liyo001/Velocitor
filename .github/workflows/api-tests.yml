@@ -1,0 +1,91 @@
+name: CI Quality Gate
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  # ====================================================================
+  # JOB 1: API Test Automation Suite (Runs on standard GitHub runner)
+  # ====================================================================
+  api-suite:
+    name: API Automation Suite (Rest Assured + JUnit 5)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Ensure Maven wrapper is executable
+        run: chmod +x ./mvnw
+
+      - name: Run API Tests
+        env:
+          BASE_URL: https://restful-booker.herokuapp.com
+        run: ./mvnw -B test
+
+      - name: Publish Surefire Test Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-surefire-reports
+          path: target/surefire-reports
+
+  # ====================================================================
+  # JOB 2: Mobile UI Suite (Designed for Device Cloud execution)
+  # NOTE: Rather than attempting to spin up a slow, non-accelerated Android
+  # emulator on GitHub Actions Linux runner (which lacks KVM support on free
+  # tiers and takes 15-20 min just to boot), mobile suites in enterprise CI
+  # are dispatched to a real device cloud (e.g., Sauce Labs, BrowserStack,
+  # or AWS Device Farm) after the API gate succeeds.
+  # ====================================================================
+  mobile-suite-cloud:
+    name: Mobile UI Smoke Suite (Device Cloud)
+    needs: api-suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.ENABLE_MOBILE_CI == 'true' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Ensure Maven wrapper is executable
+        run: chmod +x ./mvnw
+
+      - name: Run Mobile Tests on Device Cloud
+        env:
+          SAUCE_USERNAME: ${{ secrets.SAUCE_USERNAME }}
+          SAUCE_ACCESS_KEY: ${{ secrets.SAUCE_ACCESS_KEY }}
+          APPIUM_URL: ${{ secrets.DEVICE_CLOUD_APPIUM_URL || 'https://ondemand.us-west-1.saucelabs.com:443/wd/hub' }}
+          DEMO_APP_PATH: storage:filename=mda-2.2.0-25.apk
+          ANDROID_DEVICE: "Google Pixel 7"
+          ANDROID_VERSION: "13.0"
+        run: |
+          echo "Executing Mobile Smoke Suite on Device Cloud: $APPIUM_URL"
+          ./mvnw -B test -Pmobile
+
+      - name: Publish Mobile Test Reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-surefire-reports
+          path: target/surefire-reports

@@ -1,0 +1,8 @@
+target/
+.idea/
+*.iml
+.env
+app/*.apk
+.DS_Store
+outputs/
+work/
